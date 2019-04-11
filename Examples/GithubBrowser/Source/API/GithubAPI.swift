@@ -30,7 +30,7 @@ class _GitHubAPI {
             // To dump all requests and responses:
             // (Warning: may cause Xcode console overheating)
 
-            //SiestaLog.Category.enabled = .all
+            SiestaLog.Category.enabled = .all
         #endif
 
         // –––––– Global configuration ––––––
@@ -38,31 +38,41 @@ class _GitHubAPI {
         let jsonDecoder = JSONDecoder()
 
         service.configure {
-            // Cache API results for fast launch & offline access on a per-user basis.
-
-            $0.pipeline[.rawData].cacheUsing {
-                try FileCache<Data>(
-                    poolName: "api.github.com",
-                    dataIsolation: .perUser(identifiedBy: self.username))
-            }
-
-            // Using try? above signals that if we encounter an error trying create a cache directory or generate a
-            // cache isolation key from username, we should simply proceed silently without having a persistent cache.
-
             // Custom transformers can change any response into any other — including errors.
             // Here we replace the default error message with the one provided by the GitHub API (if present).
 
             $0.pipeline[.cleanup].add(
               GitHubErrorMessageExtractor(jsonDecoder: jsonDecoder))
+
+            // Cache API results for fast launch & offline access:
+
+            $0.pipeline[.rawData].cacheUsing {
+                try FileCache<Data>(
+                    poolName: "api.github.com",
+                    dataIsolation: .perUser(identifiedBy: self.username))  // Show each user their own data
+            }
+
+            // Using the closure form of cacheUsing above signals that if we encounter an error trying create a cache
+            // directory or generate a cache isolation key from the username, we should simply proceed silently without
+            // having a persistent cache.
+
+            // Note that the dataIsolation uses only username. This means that users will not _see_ other users’ data;
+            // however, it does not _secure_ one user’s data from another. A user with permission to see the cache
+            // directory could in principle see all the cached data.
+            //
+            // To fully secure one user’s data from another, the application would need to generate some long-lived
+            // secret that is unique to each user. A password can work, though it will essentially empty the user’s
+            // cache if the password changes. The server could also send some kind of high-entropy per-user token in
+            // the authentication response.
         }
 
         RemoteImageView.defaultImageService.configure {
-            // Images
+            // We can cache images offline too:
 
             $0.pipeline[.rawData].cacheUsing {
                 try FileCache<Data>(
                     poolName: "images",
-                    dataIsolation: .sharedByAllUsers)
+                    dataIsolation: .sharedByAllUsers)  // images aren't secret, so no need to isolate them
             }
         }
 
@@ -143,7 +153,7 @@ $0.expirationTime = 10000
 
     func logIn(username: String, password: String) {
         self.username = username
-        if let auth = "\(username):\(password)".data(using: String.Encoding.utf8) {
+        if let auth = "\(username):\(password)".data(using: .utf8) {
             basicAuthHeader = "Basic \(auth.base64EncodedString())"
         }
     }
