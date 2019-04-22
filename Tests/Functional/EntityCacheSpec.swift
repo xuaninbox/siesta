@@ -15,9 +15,12 @@ class EntityCacheSpec: ResourceSpecBase
     {
     override func resourceSpec(_ service: @escaping () -> Service, _ resource: @escaping () -> Resource)
         {
-        func configureCache<C: EntityCache>(_ cache: C, at stageKey: PipelineStageKey)
+        func configureCache<C: EntityCache>(
+                _ cache: C,
+                for pattern: ConfigurationPatternConvertible = "**",
+                at stageKey: PipelineStageKey)
             {
-            service().configure
+            service().configure(pattern)
                 { $0.pipeline[stageKey].cacheUsing(cache) }
             }
 
@@ -178,6 +181,36 @@ class EntityCacheSpec: ResourceSpecBase
                 configureCache(testCache, at: .cleanup)
                 stubAndAwaitRequest(for: resource())
                 expectCacheWrite(to: testCache, content: "decparmodcle")
+                }
+
+            @discardableResult
+            func stubAndAwaitRequestWithoutLoading(for resource: Resource, method: RequestMethod) -> Request
+                {
+                _ = stubRequest(resource, method.rawValue.uppercased()).andReturn(200)
+                let req = resource.request(method)
+                awaitNewData(req, initialState: .inProgress)
+                return req
+                }
+
+            it("does not cache anything for a non-load request")
+                {
+                configureCache(UnwritableCache(), at: .cleanup)
+                stubAndAwaitRequestWithoutLoading(for: resource(), method: .get)
+                }
+
+            it("caches data from a custom load request on the loaded resource")
+                {
+                let testCache = TestCache("new data")
+
+                let resource0 = service().resource("/resource0")
+                let resource1 = service().resource("/resource1")
+
+                configureCache(UnwritableCache(), for: resource0, at: .model)
+                configureCache(testCache,         for: resource1, at: .model)
+
+                let req = stubAndAwaitRequestWithoutLoading(for: resource0, method: .post)
+                resource1.load(using: req)
+                expectCacheWrite(to: testCache, content: "decparmod")
                 }
 
             it("writes each stage’s output to that stage’s cache")
@@ -373,10 +406,10 @@ private struct UnwritableCache: EntityCache
         { return nil }
 
     func writeEntity(_ entity: Entity<Any>, forKey key: URL)
-        { fatalError("cache should never be written to") }
+        { fail("cache should never be written to") }
 
     func removeEntity(forKey key: URL)
-        { fatalError("cache should never be written to") }
+        { fail("cache should never be written to") }
     }
 
 private class ObserverEventRecorder: ResourceObserver
